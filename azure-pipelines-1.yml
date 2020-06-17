@@ -1,27 +1,213 @@
-# Xamarin.Android
-# Build a Xamarin.Android project.
-# Add steps that test, sign, and distribute an app, save build artifacts, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/xamarin
+parameters:
+  slnPath : 'System.Maui.sln'
+  msbuildExtraArguments : ''
+  artifactsTargetFolder: '$(build.artifactstagingdirectory)'
+  artifactsName: 'win_build'
+  nunitTestFolder: '$(build.sourcesdirectory)'
+  includeUwp: 'true'
+  includeAndroid: 'true'
+  includeNonUwpAndNonAndroid: 'true'
+  includePages: 'false'
 
-trigger:
-- master
-
-pool:
-  vmImage: 'macos-latest'
-
-variables:
-  buildConfiguration: 'Release'
-  outputDirectory: '$(build.binariesDirectory)/$(buildConfiguration)'
 
 steps:
-- task: NuGetToolInstaller@1
+  - checkout: self
+    clean: true
+  - script: build.cmd -Target provision
+    displayName: 'Cake Provision'
+    condition: eq(variables['provisioningCake'], 'true')
 
-- task: NuGetCommand@2
-  inputs:
-    restoreSolution: '**/*.sln'
+  - task: xamops.azdevex.provisionator-task.provisionator@1
+    displayName: 'Provisionator'
+    condition: eq(variables['provisioning'], 'true')
+    inputs:
+      provisioning_script: ${{ parameters.provisionatorPath }}
+      provisioning_extra_args: ${{ parameters.provisionator.extraArguments }}
 
-- task: XamarinAndroid@1
-  inputs:
-    projectFile: '**/*droid*.csproj'
-    outputDirectory: '$(outputDirectory)'
-    configuration: '$(buildConfiguration)'
+  # - task: UseDotNet@2
+  #   displayName: "Install .net core $(DOTNET_VERSION)"
+  #   condition: ne(variables['DOTNET_VERSION'], '')
+  #   inputs:
+  #     version: $(DOTNET_VERSION)
+  #     packageType: 'sdk'
+
+  - task: NuGetToolInstaller@1
+    displayName: 'Use NuGet $(NUGET_VERSION)'
+    condition: ne(variables['NUGET_VERSION'], '')
+    inputs:
+      versionSpec: $(NUGET_VERSION)
+
+  - task: NuGetCommand@2
+    displayName: 'NuGet restore ${{ parameters.slnPath }}'
+    inputs:
+      restoreSolution: ${{ parameters.slnPath }}
+      feedsToUse: config
+      nugetConfigPath: 'DevopsNuget.config'
+
+  - script: build.cmd -Target BuildForNuget -ScriptArgs '-configuration="$(BuildConfiguration)"','-Build_ArtifactStagingDirectory="$(Build.ArtifactStagingDirectory)"'
+    name: winbuild
+    displayName: 'Build Projects For Nuget'
+    condition: ne(${{ parameters.includePages }}, 'true')
+
+  - task: MSBuild@1
+    displayName: 'Build solution ${{ parameters.slnPath }}'
+    name: winslnbuild
+    condition: eq(${{ parameters.includePages }}, 'true')
+    inputs:
+      solution: ${{ parameters.slnPath }}
+      configuration: '$(BuildConfiguration)'
+      msbuildArguments: ${{ parameters.msbuildExtraArguments }} /bl:$(Build.ArtifactStagingDirectory)\win-$(BuildConfiguration).binlog
+
+  - task: VSTest@2
+    displayName: 'Unit Tests'
+    inputs:
+      testAssemblyVer2: |
+        **/bin/$(BuildConfiguration)/System.Maui.Core.UnitTests.dll
+        **/bin/$(BuildConfiguration)/**/System.Maui.DualScreen.UnitTests.dll
+        **/bin/$(BuildConfiguration)/System.Maui.Pages.UnitTests.dll
+        **/bin/$(BuildConfiguration)/**/System.Maui.Xaml.UnitTests.dll
+      searchFolder: ${{ parameters.nunitTestFolder }}
+      codeCoverageEnabled: true
+      testRunTitle: '$(BuildConfiguration)_UnitTests'
+      configuration: '$(BuildConfiguration)'
+      diagnosticsEnabled: true
+
+  - task: CopyFiles@2
+    displayName: 'Copy Files dlls'
+    condition: eq(${{ parameters.includeNonUwpAndNonAndroid }}, 'true')
+    inputs:
+      Contents: |
+        Stubs/**/bin/**/*.dll
+        Microsoft.XamlStandard/bin/**/*.dll
+        Microsoft.XamlStandard.Design/bin/**/*.dll
+        System.Maui.Core/bin/**/*.dll
+        System.Maui.Core/bin/**/*.pdb
+        System.Maui.Core/bin/**/*.mdb
+        System.Maui.Xaml/bin/**/*.dll
+        System.Maui.Xaml/bin/**/*.pdb
+        System.Maui.Xaml/bin/**/*.mdb
+        System.Maui.Platform/bin/**/*.dll
+        System.Maui.Build.Tasks/bin/**/*.dll
+        System.Maui.Core.Design/bin/**/*.dll
+        System.Maui.Xaml.Design/bin/**/*.dll
+        System.Maui.Maps/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Maps/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Maps/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Platform.iOS/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.iOS/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Platform.iOS/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Material.iOS/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Material.iOS/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Material.iOS/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Material.Tizen/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Material.Tizen/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Material.Tizen/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Platform.MacOS/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.MacOS/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Maps/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Maps/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Maps/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Maps.iOS/bin/iPhoneSimulator/$(BuildConfiguration)/**/*.dll
+        System.Maui.Maps.MacOS/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Core.UnitTests/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Xaml.UnitTests/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Maps.Tizen/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Maps.Tizen/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Maps.Tizen/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Platform.Tizen/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.Tizen/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Platform.Tizen/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Build.Tasks.Core/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Build.Tasks.Core/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Build.Tasks.Core/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Maps.WPF/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Maps.WPF/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Maps.WPF/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Maps.GTK/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Maps.GTK/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Maps.GTK/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Platform.WPF/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.WPF/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Platform.WPF/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Platform.GTK/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.GTK/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Platform.GTK/bin/$(BuildConfiguration)/**/*.pdb
+        Microsoft.XamlStandard/bin/$(BuildConfiguration)/**/*.dll
+        Microsoft.XamlStandard/bin/$(BuildConfiguration)/**/*.mdb
+        Microsoft.XamlStandard/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.DualScreen/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.DualScreen/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.DualScreen/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.DualScreen.UnitTests/bin/$(BuildConfiguration)/**/*.dll
+        **/*.binlog
+
+      TargetFolder: ${{ parameters.artifactsTargetFolder }}
+
+  - task: CopyFiles@2
+    displayName: 'Copy UWP'
+    condition: eq(${{ parameters.includeUwp }}, 'true')
+    inputs:
+      Contents: |
+        System.Maui.Platform.UAP/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Platform.UAP/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.UAP/bin/$(BuildConfiguration)/**/*.pri
+        System.Maui.Platform.UAP/bin/$(BuildConfiguration)/**/*.xr.xml
+        System.Maui.Platform.UAP/obj/$(BuildConfiguration)/**/*.xaml
+        System.Maui.Platform.UAP/Properties/System.Maui.Platform.UAP.rd.xml
+        System.Maui.Maps.UWP/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Maps.UWP/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Maps.UWP/bin/$(BuildConfiguration)/**/*.pri
+        System.Maui.Maps.UWP/bin/$(BuildConfiguration)/**/*.xbf
+        System.Maui.DualScreen/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.DualScreen/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.DualScreen/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.DualScreen.UnitTests/bin/$(BuildConfiguration)/**/*.dll
+
+      TargetFolder: ${{ parameters.artifactsTargetFolder }}
+
+    
+  - task: CopyFiles@2
+    displayName: 'Copy Android Files dlls'
+    condition: eq('${{ parameters.includeAndroid }}', true)
+    inputs:
+      Contents: |
+        Stubs/**/bin/**/*.dll
+        System.Maui.Platform.Android/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.Android/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Platform.Android.FormsViewGroup/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.Android.FormsViewGroup/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Material.Android/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Material.Android/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Material.Android/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Maps.Android/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.Android.AppLinks/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Platform.Android.AppLinks/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Platform.Android.AppLinks/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.DualScreen/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.DualScreen/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.DualScreen/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.DualScreen.UnitTests/bin/$(BuildConfiguration)/**/*.dll
+        **/*.binlog
+
+      TargetFolder: ${{ parameters.artifactsTargetFolder }}
+
+  - task: CopyFiles@2
+    displayName: 'Copy Pages Files dlls'
+    condition: eq('${{ parameters.includePages }}', true)
+    inputs:
+      Contents: |
+        System.Maui.Pages/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Pages/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Pages/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Pages.Azure/bin/$(BuildConfiguration)/**/*.dll
+        System.Maui.Pages.Azure/bin/$(BuildConfiguration)/**/*.pdb
+        System.Maui.Pages.Azure/bin/$(BuildConfiguration)/**/*.mdb
+        System.Maui.Pages.UnitTests/bin/$(BuildConfiguration)/**/*.dll
+
+      TargetFolder: ${{ parameters.artifactsTargetFolder }}
+
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish Artifact: ${{ parameters.artifactsName }}'
+    condition: always()
+    inputs:
+      ArtifactName: ${{ parameters.artifactsName }}
